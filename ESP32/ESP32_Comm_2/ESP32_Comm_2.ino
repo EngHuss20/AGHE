@@ -57,6 +57,7 @@ void loop() {
     }
 
     // Writing the JSON Data Elements into one Data Array
+    // You can edit the Data Array to use Test dummy data
     Data[0] = doc["Slot1"];
     Data[1] = doc["Slot2"];
     Data[2] = doc["Slot3"];
