@@ -1,29 +1,45 @@
+// Arduino Mega Side of the Communication System || Serial1
+// RX1 --> D19, TX1 --> D18
+
 //___________LIBRARIES_________________
 //#include <LiquidCrystal_I2C.h>
 #include <SPI.h>
 #include <MFRC522.h>
 #include <Servo.h>
 #include <ArduinoJson.h>
+#include <LiquidCrystal_I2C.h>
+#include <Wire.h>
+
 
 //____________Define JSON object size____________
 #define JSON_BUFFER_SIZE 256
 //--------------------------------
 
 /*
+  LDR -->A01234
+  gas & flame --> A5 A6
+
   RC522 Module SCK to Mega pin 52 -->31
   RC522 Module MOSI to Mega pin 51 -->30
   RC522 Module MISO to Mega pin 50 -->29
   RC522 Module IRQ to unconnected 
   RC522 Module GND to GND
+  servo control pin -->2
+  servo control pin -->3
   servo control pin -->4
-  servo control pin -->5
+  LEDs 22-->32
+  int Ap = 5;
+  int Bp = 6;
+  int Cp = 7;
+  int Dp = 8;
+  int EmLight = 13;
 */
 
-#define SS_PIN_1 10  // Slave Select pin for RC522 Module 1
-#define RST_PIN_1 9  // Reset pin for RC522 Module 1
+#define SS_PIN_1 7  // Slave Select pin for RC522 Module 1
+#define RST_PIN_1 6  // Reset pin for RC522 Module 1
 
-#define SS_PIN_2 7   // Slave Select pin for RC522 Module 2
-#define RST_PIN_2 6  // Reset pin for RC522 Module 2
+#define SS_PIN_2 10   // Slave Select pin for RC522 Module 2
+#define RST_PIN_2 9  // Reset pin for RC522 Module 2
 
 
 //----------PINS--------------------------------------------------------//
@@ -66,7 +82,7 @@
 //--------------LDRs-----------------------
 const int LDR_Pin[5] = {A0,A1,A2,A3,A4};
 
-#define LightThreshold 500
+#define LightThreshold 100
 
 #define CarSlot_1 0
 #define CarSlot_2 1
@@ -75,9 +91,12 @@ const int LDR_Pin[5] = {A0,A1,A2,A3,A4};
 #define CarSlot_5 4
 
 int Slots[5] = {CarSlot_1,CarSlot_2,CarSlot_3,CarSlot_4,CarSlot_5}; // holds 0 or 1 , 0 >> not available, 1 >> available
-
+int Temp[5];
 #define SlotAvailable 1
 #define SlotNOTAvailable 0
+
+  int i ;//iterator
+
 
 
 //----------------RFID----------------------
@@ -86,6 +105,7 @@ int Slots[5] = {CarSlot_1,CarSlot_2,CarSlot_3,CarSlot_4,CarSlot_5}; // holds 0 o
 
   Servo Entrance_Servo;  // create servo object to control a servo
   Servo Exit_Servo;  // create servo object to control a servo
+  Servo Emergency_Servo;
 
 
   // Define named NFC cards (UID -> Card Name)
@@ -100,7 +120,7 @@ int Slots[5] = {CarSlot_1,CarSlot_2,CarSlot_3,CarSlot_4,CarSlot_5}; // holds 0 o
     {{0x04, 0x06, 0x85, 0x5B, 0x39, 0x61, 0x80}, "Card 2"},
     {{0x04, 0x53, 0x28, 0x5B, 0x39, 0x61, 0x81}, "Card 3"},
     {{0x04, 0xBA, 0x4A, 0x5B, 0x39, 0x61, 0x80}, "Card 4"},
-   {{0x04, 0xAC, 0xE1, 0x5B, 0x39, 0x61, 0x80}, "Card 5"}
+    {{0x04, 0xAC, 0xE1, 0x5B, 0x39, 0x61, 0x80}, "Card 5"}
   };
 
 
@@ -118,19 +138,55 @@ unsigned long StartTime[5];
 
 //--------LEDs---------------
 // Define the pins to be used for the LEDs
-const int ledPins[] = {dpin_1,dpin_2,dpin_3,dpin_4,dpin_5,dpin_6,dpin_7,dpin_8,dpin_9,dpin_10,dpin_11,dpin_12,dpin_13,dpin_14,dpin_15,dpin_16,dpin_17,dpin_18};
+const int ledPins[] = {dpin_1,dpin_2,dpin_3,dpin_4,dpin_5,dpin_6,dpin_7,dpin_8,dpin_9,dpin_10,dpin_11};
 const int numLeds = sizeof(ledPins) / sizeof(ledPins[0]); // Calculate the number of LEDs
-#define EmergencyState 99 
+const int EmLight = 45;
 
-const int sensorPin = A11; // Analog input pin for MQ-2 sensor
+#define ThereIsEmergency 99 
+#define NoEmergency 0
+
+#define MQ_5_A A5
+#define Flame_D A6
+
+//-----------------SevenSeg-----------------------
+
+  //seven-segment-anode-7448-decoder
+
+//Declaring variabiles
+int Ap = 33;
+int Bp = 34;
+int Cp = 35;
+int Dp = 36;
+
+//---------------------Lcd----------------------
+
+// Prototypes
+int ExitLcd(int x);
+
+//initialize the liquid crystal library
+//the first parameter is  the I2C address
+//the second parameter is how many rows are on your screen
+//the  third parameter is how many columns are on your screen
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+//----------------------------------------
+
+//---servo related variables
+  int ServoFlag = 0;
+  int pos = 0;     // variable to store the servo position
+
+
+//-------------------------------------------
 
 //---------------------------------Application Variables---------------------------
-int APP_AvailableSlots;
-int APP_Total_Profit;
-int APP_Emergency;
-int APP_TotalNumberOfCars;
+int APP_AvailableSlots;       //DONE
+int APP_Total_Profit;        //DONE
+int APP_Emergency;          //DONE
+int APP_TotalNumberOfCars; //DONE
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>__________<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<*/
 //unsigned long startTime; // Variable to store the start time
+
 
 //---------FunctionPrototypes--------------
 int CheckAvailableSlot(int LDR_Pin);
@@ -139,47 +195,165 @@ void TimerFunc(int ThisModule,int ThisCar);
 int Time(int ThisCar);
 void LEDPath_init();
 void LEDPath(int Slot);
-void LCD_Initialize();
+//void LCD_Initialize();
 void RFID_Init();
 void Read_Card_Open_Gate();
 int fees(int timeSec);
 void ServoFunc(int);
+void MainPathFunc();
+void segWrite(int n);
+int WhichCar();
 
 
 void setup(){
 
+
   Serial.begin(9600);  //-----SerialMonitor---------
   LEDPath_init(); // Initialize the LED---------
-  LCD_Initialize(); // Initialize the lcd----
+  //LCD_Initialize(); // Initialize the lcd----
   RFID_Init();
+
+  Serial.print("Sensor Value: ");
+  int MQ_Value = analogRead(MQ_5_A);
+  int Flame_Value = digitalRead(Flame_D);
+
+
+  //--SevSeg--
+  //Declaring pin as output
+  pinMode(Ap, OUTPUT);
+  pinMode(Bp, OUTPUT);
+  pinMode(Cp, OUTPUT);
+  pinMode(Dp, OUTPUT);
+
+  pinMode(EmLight, OUTPUT);
+
+   //initialize lcd screen
+  lcd.begin();
+  int money = 14;//example value
+  //ExitLcd(money);
+  //Calling LCD function to print "Your fees are ___$"
+  
+  
 
 }
 
+
+
 void loop(){
+
+
 
   //Serial.print("SmokedetectorValue :");
   //Serial.println(analogRead(sensorPin));
 
-  //if(analogRead(sensorPin)>=150){
-    //while(analogRead(sensorPin)>=150){
+  if((digitalRead(Flame_D) == 0)||(analogRead(MQ_5_A) > 600)){
 
-      //emergency code {}
+  
+    APP_Emergency = ThereIsEmergency; 
+      //
+    for (pos = 90; pos >= 0; pos -= 1) { // goes from 0 degrees to 180 degrees
+      // in steps of 1 degree
+      Emergency_Servo.write(pos);              // tell servo to go to position in variable 'pos'
+      Entrance_Servo.write(pos);              // tell servo to go to position in variable 'pos'
+      Exit_Servo.write(pos);              // tell servo to go to position in variable 'pos'
+      
+      delay(10); 
+    }
     
-    //}
-  //}else{ 
-  
-  Read_Card_Open_Gate(); // our big func
-  APP_AvailableSlots = NumberOfAvailableSlots();
-  
-  
-  Serial.println("  ");
-  Serial.println(APP_AvailableSlots);
-  Serial.println("  ");
+    ServoFlag = 1;
 
-  TimerFunc(ModFlag,CardNumber);
-  TimeVar = Time(CardNumber);
+    while((digitalRead(Flame_D) == 0)||(analogRead(MQ_5_A) > 600)){
 
+      Serial.print("GASdetectorValue :");
+      Serial.println(analogRead(MQ_5_A));
+      Serial.print("FlamedetectorValue :");
+      Serial.println(analogRead(Flame_D));
+      
+      //emergency code {}
+      digitalWrite(EmLight,HIGH);
+      delay(200);
+      digitalWrite(EmLight,LOW);
+      delay(200);
+
+                            // waits 15ms for the servo to reach the position
+    }
+      
+
+    
+
+  }else{
+
+    if (ServoFlag==1){
+
+      for (pos = 0; pos <= 90; pos += 1) { // goes from 180 degrees to 0 degrees
+      Emergency_Servo.write(pos);              // tell servo to go to position in variable 'pos'
+      Entrance_Servo.write(pos);              // tell servo to go to position in variable 'pos'
+      Exit_Servo.write(pos);              // tell servo to go to position in variable 'pos'
+      delay(10);                       // waits 15ms for the servo to reach the position
+    }
+    }
+
+    
+    APP_Emergency = NoEmergency;
+
+
+
+    APP_AvailableSlots = NumberOfAvailableSlots();
+    segWrite(APP_AvailableSlots);
+    for(i=0;i<5;i++){
+
+      Temp[i] = Slots[i];
+
+    }
+
+            
+    Read_Card_Open_Gate(); // our big func##############____MAINCODE_____________#################################
+
+    
+    
+    delay(50);
+
+
+
+
+
+    
+    if(APP_AvailableSlots < NumberOfAvailableSlots()){//$$$$$$$$$$$$$$UltraSonic$$$$$$$$$$$$$$$$$$$$$$
+
+        ModFlag = ExitMod;
+
+        CardNumber = WhichCar();
+        
+        TimerFunc(ModFlag,CardNumber);
+        
+        TimeVar = Time(CardNumber/*CardNumber*/);
+        
+        APP_TotalNumberOfCars ++;
+        
+        Serial.print("time for this car = ");
+        Serial.println(TimeVar);
+
+        ServoFunc(ExitMod);
+
+        delay(1000);
+
+   
+    }
+
+
+
+
+
+    ServoFlag = 0;
+  
+    
+    
+  
   /*
+  //Serial.println("  ");
+  //Serial.println(APP_AvailableSlots);
+  //Serial.println("  ");
+
   Serial.print("the time of car number__ ");
   Serial.print(CardNumber);
   Serial.print("is ___");
@@ -187,8 +361,15 @@ void loop(){
   delay(1000);
   */
 
+
+
+  }
+
   //*******Sending data to ESP32************
   // Create JSON object
+  
+  
+  
   StaticJsonDocument<JSON_BUFFER_SIZE> doc;
 
   // Assign data fields to the JSON object that will be sent over UART to ESP32
@@ -209,10 +390,16 @@ void loop(){
   // Send JSON string over serial
   Serial1.println(jsonBuffer);
 
-  delay(100); // Send data every 0.1 seconds
+  //delay(100); // Send data every 0.1 seconds
 
-  //}
-  }
+}
+
+
+
+
+
+
+
 
 int CheckAvailableSlot(int LDR_Pin) {
 
@@ -242,6 +429,21 @@ int NumberOfAvailableSlots() {
       NumberOfSlots++;
     }
   }
+
+
+  //______________SERIALPRINT________________
+  
+  for(i=0;i<5;i++){
+    Serial.print("LDR_");
+    Serial.print(i+1);
+    Serial.print("  value = ");
+    Serial.println(analogRead(LDR_Pin[i]));
+    
+  }
+
+  //___________________________________________
+  
+  
   return NumberOfSlots;
 }
 
@@ -304,13 +506,7 @@ void LEDPath(int Slot) {
     delay(250); // Wait for 250 milliseconds
     digitalWrite(ledPins[2], LOW); // Turn off the LED
 
-    digitalWrite(ledPins[3], HIGH); // Turn on the LED
-    delay(250); // Wait for 250 milliseconds
-    digitalWrite(ledPins[3], LOW); // Turn off the LED
-
-    digitalWrite(ledPins[4], HIGH); // Turn on the LED
-    delay(250); // Wait for 250 milliseconds
-    digitalWrite(ledPins[4], LOW); // Turn off the LED
+    
 
     break;
 
@@ -324,22 +520,15 @@ void LEDPath(int Slot) {
     delay(250); // Wait for 250 milliseconds
     digitalWrite(ledPins[1], LOW); // Turn off the LED
     
-    digitalWrite(ledPins[2], HIGH); // Turn on the LED
-    delay(250); // Wait for 250 milliseconds
-    digitalWrite(ledPins[2], LOW); // Turn off the LED
-
     digitalWrite(ledPins[3], HIGH); // Turn on the LED
     delay(250); // Wait for 250 milliseconds
     digitalWrite(ledPins[3], LOW); // Turn off the LED
 
-    digitalWrite(ledPins[5], HIGH); // Turn on the LED
+    digitalWrite(ledPins[4], HIGH); // Turn on the LED
     delay(250); // Wait for 250 milliseconds
-    digitalWrite(ledPins[5], LOW); // Turn off the LED
+    digitalWrite(ledPins[4], LOW); // Turn off the LED
 
-    digitalWrite(ledPins[6], HIGH); // Turn on the LED
-    delay(250); // Wait for 250 milliseconds
-    digitalWrite(ledPins[6], LOW); // Turn off the LED
-
+    
 
     break;
 
@@ -353,10 +542,33 @@ void LEDPath(int Slot) {
     delay(250); // Wait for 250 milliseconds
     digitalWrite(ledPins[1], LOW); // Turn off the LED
     
-    digitalWrite(ledPins[2], HIGH); // Turn on the LED
+    digitalWrite(ledPins[3], HIGH); // Turn on the LED
     delay(250); // Wait for 250 milliseconds
-    digitalWrite(ledPins[2], LOW); // Turn off the LED
+    digitalWrite(ledPins[3], LOW); // Turn off the LED
 
+    digitalWrite(ledPins[5], HIGH); // Turn on the LED
+    delay(250); // Wait for 250 milliseconds
+    digitalWrite(ledPins[5], LOW); // Turn off the LED
+
+    digitalWrite(ledPins[6], HIGH); // Turn on the LED
+    delay(250); // Wait for 250 milliseconds
+    digitalWrite(ledPins[6], LOW); // Turn off the LED
+
+    
+
+
+    break;
+
+    case CarSlot_4 :
+
+    digitalWrite(ledPins[0], HIGH); // Turn on the LED
+    delay(250); // Wait for 250 milliseconds
+    digitalWrite(ledPins[0], LOW); // Turn off the LED
+    
+    digitalWrite(ledPins[1], HIGH); // Turn on the LED
+    delay(250); // Wait for 250 milliseconds
+    digitalWrite(ledPins[1], LOW); // Turn off the LED
+    
     digitalWrite(ledPins[3], HIGH); // Turn on the LED
     delay(250); // Wait for 250 milliseconds
     digitalWrite(ledPins[3], LOW); // Turn off the LED
@@ -373,11 +585,9 @@ void LEDPath(int Slot) {
     delay(250); // Wait for 250 milliseconds
     digitalWrite(ledPins[8], LOW); // Turn off the LED
 
-
-
     break;
 
-    case CarSlot_4 :
+    case CarSlot_5 :
 
     digitalWrite(ledPins[0], HIGH); // Turn on the LED
     delay(250); // Wait for 250 milliseconds
@@ -387,10 +597,6 @@ void LEDPath(int Slot) {
     delay(250); // Wait for 250 milliseconds
     digitalWrite(ledPins[1], LOW); // Turn off the LED
     
-    digitalWrite(ledPins[2], HIGH); // Turn on the LED
-    delay(250); // Wait for 250 milliseconds
-    digitalWrite(ledPins[2], LOW); // Turn off the LED
-
     digitalWrite(ledPins[3], HIGH); // Turn on the LED
     delay(250); // Wait for 250 milliseconds
     digitalWrite(ledPins[3], LOW); // Turn off the LED
@@ -411,50 +617,10 @@ void LEDPath(int Slot) {
     delay(250); // Wait for 250 milliseconds
     digitalWrite(ledPins[10], LOW); // Turn off the LED
 
-    break;
-
-    case CarSlot_5 :
-
-    digitalWrite(ledPins[0], HIGH); // Turn on the LED
-    delay(250); // Wait for 250 milliseconds
-    digitalWrite(ledPins[0], LOW); // Turn off the LED
-    
-    digitalWrite(ledPins[1], HIGH); // Turn on the LED
-    delay(250); // Wait for 250 milliseconds
-    digitalWrite(ledPins[1], LOW); // Turn off the LED
-    
-    digitalWrite(ledPins[2], HIGH); // Turn on the LED
-    delay(250); // Wait for 250 milliseconds
-    digitalWrite(ledPins[2], LOW); // Turn off the LED
-
-    digitalWrite(ledPins[3], HIGH); // Turn on the LED
-    delay(250); // Wait for 250 milliseconds
-    digitalWrite(ledPins[3], LOW); // Turn off the LED
-
-    digitalWrite(ledPins[5], HIGH); // Turn on the LED
-    delay(250); // Wait for 250 milliseconds
-    digitalWrite(ledPins[5], LOW); // Turn off the LED
-
-    digitalWrite(ledPins[7], HIGH); // Turn on the LED
-    delay(250); // Wait for 250 milliseconds
-    digitalWrite(ledPins[7], LOW); // Turn off the LED
-
-    digitalWrite(ledPins[9], HIGH); // Turn on the LED
-    delay(250); // Wait for 250 milliseconds
-    digitalWrite(ledPins[9], LOW); // Turn off the LED
-
-    digitalWrite(ledPins[11], HIGH); // Turn on the LED
-    delay(250); // Wait for 250 milliseconds
-    digitalWrite(ledPins[11], LOW); // Turn off the LED
-
-    digitalWrite(ledPins[12], HIGH); // Turn on the LED
-    delay(250); // Wait for 250 milliseconds
-    digitalWrite(ledPins[12], LOW); // Turn off the LED
-
 
     break;
 
-    case EmergencyState :
+    case ThereIsEmergency :
 
     //mesh delwa2ty-----
 
@@ -472,8 +638,9 @@ void RFID_Init(){
 
   Serial.println("Scan an NFC card...");
 
-  Entrance_Servo.attach(4);  // attaches the servo on pin 2 to the servo object
-  Exit_Servo.attach(5);  // attaches the servo on pin 3 to the servo object
+  Emergency_Servo.attach(2);
+  Entrance_Servo.attach(3);  // attaches the servo on pin 2 to the servo object
+  Exit_Servo.attach(4);  // attaches the servo on pin 3 to the servo object
 
 }
 
@@ -502,7 +669,9 @@ bool compareUID(byte* uid1, byte* uid2) {
 
 void Read_Card_Open_Gate() {
 
-  if (mfrc522_1.PICC_IsNewCardPresent() && mfrc522_1.PICC_ReadCardSerial())
+  ModFlag = 0;
+
+  if (mfrc522_1.PICC_IsNewCardPresent() && mfrc522_1.PICC_ReadCardSerial() && (0 != APP_AvailableSlots))
   {
     MFRC522::Uid uid_1 = mfrc522_1.uid; // Get UID struct
     handleCard(uid_1.uidByte); // Pass UID bytes to handleCard()
@@ -510,24 +679,21 @@ void Read_Card_Open_Gate() {
     ModFlag = EntranceMod;////////////////////////////////////////////////////////////////<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<,,
     delay(10); // Delay to avoid multiple reads
     mfrc522_1.PICC_HaltA(); // Halt PICC
+
+
+    TimerFunc(ModFlag,CardNumber);
+    //TimeVar = Time(CardNumber);
+    ServoFunc(EntranceMod);
+    MainPathFunc();
+
     
     
     
-    /*for (pos = 0; pos <= 90; pos += 1) { // goes from 0 degrees to 180 degrees
-      // in steps of 1 degree
-      Entrance_Servo.write(pos);              // tell servo to go to position in variable 'pos'
-      delay(10);                       // waits 15ms for the servo to reach the position
-    }
-   // delay(3000);//---------------time between openning the gate and closing it------------------------
-    for (pos = 90; pos >= 0; pos -= 1) { // goes from 180 degrees to 0 degrees
-      Entrance_Servo.write(pos);              // tell servo to go to position in variable 'pos'
-      delay(10);                       // waits 15ms for the servo to reach the position
-    }*/
 
 
 
   }
-  else if (mfrc522_2.PICC_IsNewCardPresent() && mfrc522_2.PICC_ReadCardSerial())
+  /*else if (mfrc522_2.PICC_IsNewCardPresent() && mfrc522_2.PICC_ReadCardSerial())
   {
     MFRC522::Uid uid_2 = mfrc522_2.uid; // Get UID struct
     handleCard(uid_2.uidByte); // Pass UID bytes to handleCard()
@@ -537,36 +703,35 @@ void Read_Card_Open_Gate() {
     mfrc522_2.PICC_HaltA(); // Halt PICC
     
     APP_TotalNumberOfCars ++;//increase total number of cars by 1
-    Serial.println("  ");
-    Serial.println(APP_TotalNumberOfCars);
-    Serial.println("  ");
+    
 
+    TimerFunc(ModFlag,CardNumber);
+    TimeVar = Time(CardNumber);
     ServoFunc(ExitMod);
+
+
+    //Serial.println("  ");
+    //Serial.println(APP_TotalNumberOfCars);
+    //Serial.println("  ");
+
     
-    
-    /*for (pos = 0; pos <= 90; pos += 1) { // goes from 0 degrees to 180 degrees
-      // in steps of 1 degree
-      Exit_Servo.write(pos);              // tell servo to go to position in variable 'pos'
-      delay(10);                       // waits 15ms for the servo to reach the position
-    }
-    //delay(3000);//---------------time between openning the gate and closing it------------------------
-    for (pos = 90; pos >= 0; pos -= 1) { // goes from 180 degrees to 0 degrees
-      Exit_Servo.write(pos);              // tell servo to go to position in variable 'pos'
-      delay(15);                       // waits 15ms for the servo to reach the position
-    }*/
+   
 
 
 
-  }
+  }*/
+
+  //
+  Serial.println("MAINN function run successfully");
+  //
 
 }
 
 void ServoFunc(int ThisMod){
-  int pos = 0;    // variable to store the servo position
-
+  
   if(ThisMod == EntranceMod){
 
-    for (pos = 0; pos <= 90; pos += 1) { // goes from 0 degrees to 180 degrees
+    for (pos = 90; pos >= 0; pos -= 1) { // goes from 0 degrees to 180 degrees
       // in steps of 1 degree
       Entrance_Servo.write(pos);              // tell servo to go to position in variable 'pos'
       delay(10);                       // waits 15ms for the servo to reach the position
@@ -574,7 +739,7 @@ void ServoFunc(int ThisMod){
     
     delay(3000);//---------------time between openning the gate and closing it------------------------
     
-    for (pos = 90; pos >= 0; pos -= 1) { // goes from 180 degrees to 0 degrees
+    for (pos = 0; pos <= 90; pos += 1) { // goes from 180 degrees to 0 degrees
       Entrance_Servo.write(pos);              // tell servo to go to position in variable 'pos'
       delay(10);                       // waits 15ms for the servo to reach the position
     
@@ -582,107 +747,125 @@ void ServoFunc(int ThisMod){
 
     }else if(ThisMod == ExitMod){
 
-      for (pos = 0; pos <= 90; pos += 1) { // goes from 0 degrees to 180 degrees
+      for (pos = 90; pos >= 0; pos -= 1) { // goes from 0 degrees to 180 degrees
       // in steps of 1 degree
       Exit_Servo.write(pos);              // tell servo to go to position in variable 'pos'
       delay(10);                       // waits 15ms for the servo to reach the position
     }
+
     
-    delay(3000);//---------------time between openning the gate and closing it------------------------
+    ExitLcd(fees(TimeVar));
     
-    for (pos = 90; pos >= 0; pos -= 1) { // goes from 180 degrees to 0 degrees
+    //delay(3000);//---------------time between openning the gate and closing it------------------------
+    
+    for (pos = 0; pos <= 90; pos += 1) { // goes from 180 degrees to 0 degrees
       Exit_Servo.write(pos);              // tell servo to go to position in variable 'pos'
-      delay(15);                       // waits 15ms for the servo to reach the position
+      delay(10);                       // waits 15ms for the servo to reach the position
     }
 
     }
 
 }
+
 // The function responsible for calculating fees
 int fees(int timeSec){
-  return timeSec*2; 
-}
-
-void LCD_Initialize(){
-}
-
-
-
-
-
-
-/*const int sensorPin = A0; // Analog input pin for MQ-2 sensor
-const int ledPin = 9;     // LED connected to digital pin 9
-const int threshold = 400; // Threshold for triggering the LED
-
-void setup() {
-  pinMode(ledPin, OUTPUT);
-  Serial.begin(9600); // Initialize serial communication at 9600 bps
-}
-
-int SmkeSens() {
-  int sensorValue = analogRead(sensorPin); // Read the analog value from sensor
-  Serial.println(sensorValue); // Print the sensor value to the Serial Monitor
   
-  // Check if the gas concentration has exceeded the threshold
-  if (sensorValue >= threshold) {
-    
-  } else {
-    
+  int fees = timeSec*2;
+
+  APP_Total_Profit += fees;
+  
+  return fees; 
+  
+}
+//____________________________
+void MainPathFunc(){
+
+  int FuncVar = NumberOfAvailableSlots();
+  //
+ 
+  Serial.print("num of available slots :");
+  Serial.println(FuncVar);
+  //
+  
+  int i;
+  for(i=4;i>=0;i--){
+    if(Slots[i]==SlotAvailable){
+      
+      while( FuncVar <= NumberOfAvailableSlots() ){
+
+        LEDPath(i);
+
+      }
+      
+      break;
+
+    }
+  
   }
 
-  delay(1000); // Wait for a second
-}*/
+  //
+  Serial.println("Main path function run successfully");
+  //
+
+} 
+//____________________________
+void segWrite(int n){
+  ///Decimal-Binary Conversion Function
+
+  //Turns off all LEDs
+  digitalWrite(Dp, LOW);
+  digitalWrite(Cp, LOW);
+  digitalWrite(Bp, LOW);
+  digitalWrite(Ap, LOW);
+
+  ///Decimal Conversion
+  if(n >= 8){
+    digitalWrite(Dp, HIGH);
+    n = n - 8 ;
+  }
+  if(n >= 4){
+    digitalWrite(Cp, HIGH);
+    n = n - 4;
+  }
+  if(n>=2){
+    digitalWrite(Bp, HIGH);
+    n = n - 2;
+  }
+  if(n>=1){
+    digitalWrite(Ap, HIGH);
+    n = n - 1;
+  }
+}
+//function to print fees on the lcd 
+int ExitLcd(int x){
+  // turn on the backlight
+  lcd.backlight();
+  // tell the screen to write on the top row
+  lcd.setCursor(0,0);
+  lcd.print("Your fees are ");
+  // tell the screen to write on the bottom row
+  lcd.setCursor(12,1);
+  // print the variable money amount 
+  lcd.print(x); 
+  lcd.print("$");
+  delay(5500);
+  lcd.clear();
+}
+int WhichCar(){
+
+  int i;
+  
+
+  for(i=0;i<5;i++){
+
+    if(Slots[i]!=Temp[i]){
 
 
+     return i;
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/*
-  CheckAvailableSlot(ledPins[i]);
-  Serial.print("Slot_");
-  Serial.print(i);
-  Serial.print("   sensorisreading ");
-  Serial.println(analogRead(LDR_Pin[i]));
-  Serial.println(NumberOfAvailableSlots());
-  i++;
-  if (i==5){
-    i = 0;
+    }
+  
   }
 
-    delay(1000);
-
-*/
+}
