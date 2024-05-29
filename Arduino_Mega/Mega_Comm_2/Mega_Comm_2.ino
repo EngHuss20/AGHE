@@ -208,7 +208,8 @@ int WhichCar();
 void setup(){
 
 
-  Serial.begin(9600);  //-----SerialMonitor---------
+  Serial.begin(115200);  //-----SerialMonitor---------
+  Serial1.begin(9600);
   LEDPath_init(); // Initialize the LED---------
   //LCD_Initialize(); // Initialize the lcd----
   RFID_Init();

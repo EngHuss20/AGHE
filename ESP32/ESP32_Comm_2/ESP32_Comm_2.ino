@@ -11,8 +11,8 @@ const char* ssid = "MegzEsp";   // your network SSID (name)
 const char* password = "14559000";   // your network password
 
 //// ThingSpeak Settings
-unsigned long myChannelNumber = 2531600;
-const char * myWriteAPIKey = "WRO8CFCEZF9F96LS";
+unsigned long myChannelNumber = 1;
+const char * myWriteAPIKey = "Secret";
 
 //// Global Objects and Variables
 WiFiClient  client;
